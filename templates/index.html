@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Invoice Extractor (Gemini 1.5)</title>
+    <style>
+        :root {
+            --primary-color: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+            --text-color: #1f2937;
+            --border-color: #e5e7eb;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #6b7280;
+        }
+
+        /* Upload Section */
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .upload-area:hover, .upload-area.dragover {
+            border-color: var(--primary-color);
+            background-color: #eef2ff;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #9ca3af;
+            margin-bottom: 10px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .btn-extract {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+            transition: background 0.2s;
+        }
+
+        .btn-extract:hover {
+            background-color: var(--primary-hover);
+        }
+
+        .btn-extract:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        /* Loader */
+        .loader-container {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Results Section */
+        #resultsSection {
+            display: none;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .metric-card {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .metric-label {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: #f9fafb;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* JSON Debug */
+        .json-debug {
+            margin-top: 20px;
+        }
+        
+        details summary {
+            cursor: pointer;
+            color: var(--primary-color);
+            font-weight: 600;
+            outline: none;
+        }
+
+        pre {
+            background: #1f2937;
+            color: #10b981;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>🧾 AI Invoice Extractor</h1>
+        <p>Powered by Google Gemini 1.5 Flash</p>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="card">
+        <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <div class="upload-icon">📂</div>
+            <p><strong>Click to upload</strong> or drag and drop</p>
+            <p style="font-size: 12px; color: #9ca3af;">Supported: JPG, PNG, PDF</p>
+            <p id="fileName" style="margin-top: 10px; color: var(--primary-color); font-weight: 600;"></p>
+        </div>
+        <input type="file" id="fileInput" accept="image/*,application/pdf" onchange="handleFileSelect(this)">
+        
+        <button id="extractBtn" class="btn-extract" onclick="uploadFile()">Analyze Document</button>
+        
+        <div class="loader-container" id="loader">
+            <div class="spinner"></div>
+            <p>Gemini is reading your bill...</p>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="resultsSection" class="card">
+        <h2>Extraction Results</h2>
+        
+        <!-- Summary Metrics -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-value" id="displayTotalItems">0</div>
+                <div class="metric-label">Total Items Found</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="displayTotalTokens">0</div>
+                <div class="metric-label">Tokens Used</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="displayCalculatedTotal">0.00</div>
+                <div class="metric-label">Calculated Total</div>
+            </div>
+        </div>
+
+        <!-- Items Table -->
+        <div class="table-container">
+            <table id="itemsTable">
+                <thead>
+                    <tr>
+                        <th style="width: 50%">Item Name</th>
+                        <th style="width: 15%">Qty</th>
+                        <th style="width: 15%">Rate</th>
+                        <th style="width: 20%">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Rows will be injected here -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Raw JSON Viewer -->
+        <div class="json-debug">
+            <details>
+                <summary>View Raw API Response</summary>
+                <pre id="jsonOutput"></pre>
+            </details>
+        </div>
+    </div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const fileNameDisplay = document.getElementById('fileName');
+    const extractBtn = document.getElementById('extractBtn');
+    const loader = document.getElementById('loader');
+    const resultsSection = document.getElementById('resultsSection');
+    const dropZone = document.getElementById('dropZone');
+
+    // UI: Handle File Selection
+    function handleFileSelect(input) {
+        if (input.files && input.files[0]) {
+            fileNameDisplay.textContent = "Selected: " + input.files[0].name;
+        }
+    }
+
+    // UI: Drag and Drop events
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            handleFileSelect(fileInput);
+        }
+    });
+
+    // API: Upload and Extract
+    async function uploadFile() {
+        if (!fileInput.files[0]) {
+            alert("Please select a file first!");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+
+        // UI Updates
+        extractBtn.disabled = true;
+        loader.style.display = "block";
+        resultsSection.style.display = "none";
+        
+        try {
+            // Hit the /analyze-file endpoint
+            const response = await fetch('/analyze-file', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.is_success) {
+                renderResults(result);
+            } else {
+                alert("Error: " + (result.error || "Unknown error occurred"));
+            }
+
+        } catch (error) {
+            console.error("Error:", error);
+            alert("Failed to connect to the server.");
+        } finally {
+            extractBtn.disabled = false;
+            loader.style.display = "none";
+        }
+    }
+
+    // Logic: Render Table and Summaries
+    function renderResults(result) {
+        const data = result.data;
+        const tokenUsage = result.token_usage;
+        const tbody = document.querySelector("#itemsTable tbody");
+        tbody.innerHTML = ""; // Clear existing rows
+
+        let calculatedTotal = 0;
+        let totalItems = 0;
+
+        // Loop through pages
+        if (data.pagewise_line_items) {
+            data.pagewise_line_items.forEach(page => {
+                // Optional: Add a row for page header if needed
+                // const headerRow = `<tr style="background:#f3f4f6"><td colspan="4"><strong>Page ${page.page_no} - ${page.page_type}</strong></td></tr>`;
+                // tbody.innerHTML += headerRow;
+
+                page.bill_items.forEach(item => {
+                    const amount = parseFloat(item.item_amount) || 0;
+                    calculatedTotal += amount;
+                    totalItems++;
+
+                    const row = `
+                        <tr>
+                            <td>${item.item_name}</td>
+                            <td>${item.item_quantity}</td>
+                            <td>${item.item_rate}</td>
+                            <td><strong>${amount.toFixed(2)}</strong></td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            });
+        }
+
+        // Update Metrics
+        document.getElementById('displayTotalItems').textContent = data.total_item_count || totalItems;
+        document.getElementById('displayTotalTokens').textContent = tokenUsage ? tokenUsage.total_tokens : "N/A";
+        document.getElementById('displayCalculatedTotal').textContent = calculatedTotal.toFixed(2);
+
+        // Update JSON View
+        document.getElementById('jsonOutput').textContent = JSON.stringify(result, null, 2);
+
+        // Show Results
+        resultsSection.style.display = "block";
+        
+        // Scroll to results
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+</script>
+
+</body>
+</html>

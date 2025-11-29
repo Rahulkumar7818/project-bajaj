@@ -3,46 +3,38 @@ import json
 import requests
 import tempfile
 import google.generativeai as genai
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# Get this from https://aistudio.google.com/app/apikey
 API_KEY = os.getenv("GOOGLE_API_KEY") 
 
 if not API_KEY:
-    print("❌ ERROR: GOOGLE_API_KEY not found in environment variables.")
+    # Fallback if .env isn't loaded by Docker, try direct system env
+    print("⚠️ WARNING: GOOGLE_API_KEY not found.")
 else:
     genai.configure(api_key=API_KEY)
 
-# --- GENERATION CONFIG ---
-# This forces Gemini to output valid JSON
+# --- GEMINI SETUP ---
 generation_config = {
     "temperature": 0.1,
     "top_p": 0.95,
-    "top_k": 64,
     "max_output_tokens": 8192,
     "response_mime_type": "application/json",
 }
 
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", # Flash is fast and cheap
+    model_name="gemini-1.5-flash",
     generation_config=generation_config,
 )
 
-# --- THE PROMPT ---
-# This ensures the output matches your Hackathon constraints EXACTLY
 SYSTEM_PROMPT = """
-You are an expert automated Invoice Extraction System.
-Your task is to extract line item details, sub-totals, and final totals from the provided bill/invoice image or PDF.
-
+You are an Invoice Extraction System. Extract line items, sub-totals, and final totals.
 RULES:
-1. Extract ALL line items. Do not miss any.
-2. Do not double count items.
-3. Return ONLY JSON. No markdown formatting.
-4. Follow this exact structure for the output:
-
+1. Extract ALL line items.
+2. Return ONLY JSON.
+3. Follow this structure:
 {
     "pagewise_line_items": [
         {
@@ -50,88 +42,113 @@ RULES:
             "page_type": "Bill Detail", 
             "bill_items": [
                 {
-                    "item_name": "Exact Item Name",
-                    "item_amount": 100.00,
-                    "item_rate": 10.00,
-                    "item_quantity": 10.0
+                    "item_name": "string",
+                    "item_amount": 0.0,
+                    "item_rate": 0.0,
+                    "item_quantity": 0.0
                 }
             ]
         }
     ],
     "total_item_count": 0
 }
-
-NOTE: 
-- "item_amount" is the Net Amount (Rate * Qty).
-- "page_type" should be "Bill Detail", "Final Bill", or "Pharmacy".
-- If the document has multiple pages, group items by page.
+Note: item_amount is the net amount (rate * qty).
 """
 
-# --- ROUTE ---
+# --- HELPER TO PROCESS FILE WITH GEMINI ---
+def process_with_gemini(file_path):
+    print("📤 Uploading to Gemini...")
+    uploaded_file = genai.upload_file(file_path)
+    
+    print("🧠 Analyzing...")
+    response = model.generate_content([SYSTEM_PROMPT, uploaded_file])
+    
+    # Parse JSON
+    ai_output = json.loads(response.text)
+    
+    # Get Usage
+    usage = response.usage_metadata
+    token_usage = {
+        "total_tokens": usage.total_token_count,
+        "input_tokens": usage.prompt_token_count,
+        "output_tokens": usage.candidates_token_count
+    }
+    
+    return {
+        "is_success": True,
+        "token_usage": token_usage,
+        "data": ai_output
+    }
+
+# --- ROUTES ---
+
+@app.route('/')
+def index():
+    """Serves the Frontend UI"""
+    return render_template('index.html')
+
 @app.route('/extract-bill-data', methods=['POST'])
-def extract_bill_data():
-    # 1. Validate Input
-    data = request.get_json()
-    if not data or 'document' not in data:
-        return jsonify({"is_success": False, "error": "Missing 'document' url"}), 400
-    
-    doc_url = data['document']
-    
-    temp_path = None
+def extract_bill_api():
+    """
+    STRICT HACKATHON ENDPOINT
+    Input: JSON {"document": "url"}
+    """
     try:
-        # 2. Download the File
-        # We need to save it temporarily to upload to Gemini
-        print(f"📥 Downloading: {doc_url}")
+        data = request.get_json()
+        if not data or 'document' not in data:
+            return jsonify({"is_success": False, "error": "Missing 'document' url"}), 400
+        
+        doc_url = data['document']
+        print(f"📥 API Request for URL: {doc_url}")
+
+        # Download URL to temp file
         response = requests.get(doc_url, stream=True)
         if response.status_code != 200:
-            return jsonify({"is_success": False, "error": "Failed to download document"}), 400
-
-        # Determine extension (default to jpg if unknown, Gemini handles mime types well)
+            return jsonify({"is_success": False, "error": "Could not download file"}), 400
+            
         ext = ".pdf" if ".pdf" in doc_url.lower() else ".jpg"
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
             temp_file.write(response.content)
             temp_path = temp_file.name
 
-        # 3. Upload to Gemini File API
-        # This handles large PDFs and Images natively
-        print("📤 Uploading to Gemini...")
-        uploaded_file = genai.upload_file(temp_path)
-        
-        # 4. Generate Content
-        print("🧠 Processing with Gemini Flash...")
-        response = model.generate_content([SYSTEM_PROMPT, uploaded_file])
-        
-        # 5. Parse Response
-        ai_output = json.loads(response.text)
-        
-        # Calculate tokens (Gemini provides usage metadata)
-        usage = response.usage_metadata
-        token_usage = {
-            "total_tokens": usage.total_token_count,
-            "input_tokens": usage.prompt_token_count,
-            "output_tokens": usage.candidates_token_count
-        }
-
-        # 6. Format Final Response
-        final_response = {
-            "is_success": True,
-            "token_usage": token_usage,
-            "data": ai_output
-        }
-
-        return jsonify(final_response)
+        try:
+            result = process_with_gemini(temp_path)
+            return jsonify(result)
+        finally:
+            if os.path.exists(temp_path): os.remove(temp_path)
 
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"is_success": False, "error": str(e)}), 500
+
+@app.route('/analyze-file', methods=['POST'])
+def analyze_file_ui():
+    """
+    UI HELPER ENDPOINT
+    Input: Multipart File Upload
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
     
-    finally:
-        # Cleanup temp file
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    try:
+        # Save uploaded file to temp
+        ext = os.path.splitext(file.filename)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+            file.save(temp_file.name)
+            temp_path = temp_file.name
+
+        try:
+            result = process_with_gemini(temp_path)
+            return jsonify(result)
+        finally:
+            if os.path.exists(temp_path): os.remove(temp_path)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
