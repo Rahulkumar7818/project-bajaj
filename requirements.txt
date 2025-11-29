@@ -1,0 +1,10 @@
+Flask==3.0.0
+torch
+torchvision
+transformers
+pillow
+pytesseract
+numpy
+gunicorn
+python-multipart
+requests
