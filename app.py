@@ -23,12 +23,10 @@ generation_config = {
     "response_mime_type": "application/json",
 }
 
-# NOTE: The error 404 usually comes from an old 'google-generativeai' library version.
-# We are using 'gemini-1.5-flash' as it is the stable, fast model.
-# If you really want 2.0 (Preview), use "gemini-2.0-flash-exp". 
-# There is no "gemini-2.0-flash-lite" yet.
+# UPDATED: Using Gemini 2.0 Flash Lite based on your docs
+# Model code: gemini-2.0-flash-lite
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", 
+    model_name="gemini-2.0-flash-lite", 
     generation_config=generation_config,
 )
 
@@ -37,7 +35,7 @@ You are an Invoice Extraction System. Extract line items, sub-totals, and final 
 RULES:
 1. Extract ALL line items.
 2. Return ONLY JSON.
-3. Follow this structure:
+3. Follow this structure exactly:
 {
     "pagewise_line_items": [
         {
@@ -61,9 +59,10 @@ Note: item_amount is the net amount (rate * qty).
 # --- HELPER TO PROCESS FILE WITH GEMINI ---
 def process_with_gemini(file_path):
     print("📤 Uploading to Gemini...")
+    # Gemini 2.0 Flash Lite supports Images/PDFs via File API
     uploaded_file = genai.upload_file(file_path)
     
-    print("🧠 Analyzing...")
+    print(f"🧠 Analyzing with {model.model_name}...")
     response = model.generate_content([SYSTEM_PROMPT, uploaded_file])
     
     # Parse JSON
