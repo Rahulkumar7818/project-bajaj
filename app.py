@@ -11,7 +11,6 @@ app = Flask(__name__)
 API_KEY = os.getenv("GOOGLE_API_KEY") 
 
 if not API_KEY:
-    # Fallback if .env isn't loaded by Docker, try direct system env
     print("⚠️ WARNING: GOOGLE_API_KEY not found.")
 else:
     genai.configure(api_key=API_KEY)
@@ -24,8 +23,12 @@ generation_config = {
     "response_mime_type": "application/json",
 }
 
+# NOTE: The error 404 usually comes from an old 'google-generativeai' library version.
+# We are using 'gemini-1.5-flash' as it is the stable, fast model.
+# If you really want 2.0 (Preview), use "gemini-2.0-flash-exp". 
+# There is no "gemini-2.0-flash-lite" yet.
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
+    model_name="gemini-1.5-flash", 
     generation_config=generation_config,
 )
 
@@ -64,7 +67,13 @@ def process_with_gemini(file_path):
     response = model.generate_content([SYSTEM_PROMPT, uploaded_file])
     
     # Parse JSON
-    ai_output = json.loads(response.text)
+    try:
+        ai_output = json.loads(response.text)
+    except Exception as e:
+        # Fallback if model returns text + json
+        print(f"JSON Parse Error: {e}. Raw: {response.text}")
+        cleaned_text = response.text.replace("```json", "").replace("```", "")
+        ai_output = json.loads(cleaned_text)
     
     # Get Usage
     usage = response.usage_metadata
